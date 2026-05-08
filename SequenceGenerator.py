@@ -1,12 +1,23 @@
 import random
+import os
 
 sequences = {}
 stats = {}
 
-def generate_sequence(length: int) -> str:
-    """Returns a random DNA sequence of the specified length."""
-    letters = "ACTG"
-    return "".join(random.choice(letters) for _ in range(length))
+
+def generate_sequence(length: int, distribution: dict = None) -> str:
+    """Returns a random DNA sequence with optional weighted distribution."""
+    letters = ["A", "C", "T", "G"]
+
+    if distribution:
+        # Extract weights in the same order as letters
+        weights = [distribution.get(base, 25.0) for base in letters]
+        # random.choices returns a list, so we join it
+        seq_list = random.choices(letters, weights=weights, k=length)
+        return "".join(seq_list)
+
+    # Default uniform distribution
+    return "".join(random.choice("ACTG") for _ in range(length))
 
 
 def calculate_stats(sequence: str) -> dict:
@@ -56,13 +67,22 @@ def format_fasta ( seq_id : str , description : str ,
     body = "".join(lines)
     return header + body
 
-def save_fasta (fasta: str,
-                seq_id: str):
-    filename = seq_id + ".fasta"
-    with open(filename, "w") as f:
-        f.write(fasta)
 
-    """Returns a formatted FASTA record as a string."""
+def save_fasta(fasta: str, seq_id: str, folder: str = None):
+    """Saves the FASTA record into a specific folder if provided."""
+    filename = f"{seq_id}.fasta"
+
+    if folder:
+        # Create the directory if it doesn't exist
+        if not os.path.exists(folder):
+            os.makedirs(folder)
+        # Join the folder path and filename
+        filepath = os.path.join(folder, filename)
+    else:
+        filepath = filename
+
+    with open(filepath, "w") as f:
+        f.write(fasta)
 
 def validate_positive_int(prompt: str, min_val: int = 1, max_val: int = 100_000) -> int:
     while True:
@@ -149,55 +169,77 @@ def prompt_batch_mode():
             continue
 
 
-def run_analysis_pipeline(length, seq_id, desc, name, multi_file=None):
-    """Executes the generation, analysis, and saving for a single sequence."""
-    # 1. Generate
-    raw_seq = generate_sequence(length)
-    seq_with_name = insert_name(raw_seq, name)
+def prompt_distribution() -> dict:
+    """Prompts user for nucleotide percentages and validates the sum."""
+    while True:
+        print("\nEnter percentage distribution (must sum to 100):")
+        try:
+            a = float(input("Percentage of A: "))
+            c = float(input("Percentage of C: "))
+            g = float(input("Percentage of G: "))
+            t = float(input("Percentage of T: "))
 
-    # 2. Stats
-    current_stats = calculate_stats(seq_with_name)
+            if round(a + c + g + t, 2) == 100.0:
+                return {"A": a, "C": c, "G": g, "T": t}
+            else:
+                print(f"Error: Sum is {a + c + g + t}%. It must be exactly 100%.")
+        except ValueError:
+            print("Error: Please enter numeric values.")
+
+
+def run_analysis_pipeline(length, seq_id, desc, name, output_folder=None, distribution_decision: str = "n"):
+    """Executes generation, analysis, and saves to individual files."""
+    # 0. Distribution
+    dist = prompt_distribution() if distribution_decision == "y" else None
+
+    # 1. Generate PURE DNA
+    raw_seq = generate_sequence(length, dist)
+
+    # 2. Calculate Stats on PURE DNA
+    current_stats = calculate_stats(raw_seq)
     stats[seq_id] = current_stats
-    sequences[seq_id] = seq_with_name
 
-    # 3. Display
-    print(f"\nSequence statistics (n={length}):")
+    # 3. Insert Name
+    seq_to_save = insert_name(raw_seq, name)
+
+    # 4. Display Stats
+    print(f"\nSequence statistics (DNA length={length}):")
     for key, val in current_stats.items():
         label = "GC-content" if key == "gc_ratio_A" else key
         print(f"{label}: {val:.2f}%")
 
-    # 4. Features
-    # find_motifs(seq_with_name)
-    # rna = transcribe_to_rna(seq_with_name)
-    # prot = translate_to_protein(seq_with_name)
-
     # 5. Format and Save
-    fasta_main = format_fasta(seq_id, desc, seq_with_name)
-    # fasta_rna = format_fasta(f"{seq_id}_mRNA", f"RNA transcription of {seq_id}", rna)
-    # fasta_prot = format_fasta(f"{seq_id}_PROT", f"Translation of {seq_id}", prot)
+    fasta_content = format_fasta(seq_id, desc, seq_to_save)
 
-    # final_output = fasta_main + fasta_rna + fasta_prot
+    # Save to individual file (in folder if batch)
+    save_fasta(fasta_content, seq_id, folder=output_folder)
 
-    target_name = multi_file if multi_file else seq_id
-    # save_fasta(final_output, target_name, mode="a" if multi_file else "w")
-    print(f"Sequence saved to: {target_name}.fasta")
+    print(f"Sequence saved as {seq_id}.fasta")
 
 def main():
-    """Main entry point: Handlings Batch Mode selection and program flow."""
-    decision = input("Batch mode? (y/n): ").lower()
+    """Main entry point handling Batch and Distribution modes."""
+    batch_decision = input("Batch mode? (y/n): ").lower()
+    dist_decision = input("Custom nucleotide distribution? (y/n): ").lower()
 
-    if decision == "y":
+    if batch_decision == "y":
         num_seqs = validate_positive_int("Enter number of sequences: ", 1, 100)
-        batch_filename = "Batch_Results"
+        # Name of the folder where all individual files will go
+        batch_folder = "Batch_Results_Folder"
+
         for i in range(num_seqs):
             print(f"\n--- Sequence #{i + 1} ---")
-            length = validate_positive_int("Enter sequence length: ", 1, 100000)
+            length = validate_positive_int("Enter length: ", 1, 100000)
             seq_id, desc, name = perform_metadata_inputs()
-            run_analysis_pipeline(length, f"{seq_id}_{i + 1}", desc, name, multi_file=batch_filename)
+
+            # Pass the batch_folder as the output_folder
+            run_analysis_pipeline(length, f"{seq_id}_{i + 1}", desc, name,
+                                  output_folder=batch_folder,
+                                  distribution_decision=dist_decision)
     else:
-        length = validate_positive_int("Enter sequence length: ", 1, 100000)
+        length = validate_positive_int("Enter length: ", 1, 100000)
         seq_id, desc, name = perform_metadata_inputs()
-        run_analysis_pipeline(length, seq_id, desc, name)
+        run_analysis_pipeline(length, seq_id, desc, name,
+                              distribution_decision=dist_decision)
 
 
 if __name__ == "__main__":
