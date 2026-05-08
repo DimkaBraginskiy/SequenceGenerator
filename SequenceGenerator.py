@@ -8,28 +8,19 @@ stats = {}
 def generate_sequence(length: int, distribution: dict = None) -> str:
     """Returns a random DNA sequence with optional weighted distribution."""
     letters = ["A", "C", "T", "G"]
-
     if distribution:
-        # Extract weights in the same order as letters
         weights = [distribution.get(base, 25.0) for base in letters]
-        # random.choices returns a list, so we join it
-        seq_list = random.choices(letters, weights=weights, k=length)
-        return "".join(seq_list)
-
-    # Default uniform distribution
+        return "".join(random.choices(letters, weights=weights, k=length))
     return "".join(random.choice("ACTG") for _ in range(length))
 
 
 def calculate_stats(sequence: str) -> dict:
-    """Returns a dictionary of sequence statistics including gc_ratio_A."""
-    # Filter out name characters (lowercase) for accurate stats
+    """Returns statistics using key 'gc_ratio_A' as per formal requirements."""
     dna_only = "".join([c for c in sequence if c.isupper()])
     seq_len = len(dna_only)
-
     if seq_len == 0:
         return {"A": 0.0, "C": 0.0, "G": 0.0, "T": 0.0, "gc_ratio_A": 0.0}
 
-    # Internal key "gc_ratio_A" used as per formal requirements
     results = {
         "A": round(dna_only.count("A") / seq_len * 100, 2),
         "T": round(dna_only.count("T") / seq_len * 100, 2),
@@ -48,24 +39,18 @@ def print_stats (stats: dict,
         print(f"{stat}: {stats[stat]}%")
 
 
-def insert_name (sequence: str, name: str) -> str:
-    """Inserts a name at a random position in the sequence.
-    Name written in lowercase letters."""
+def insert_name(sequence: str, name: str) -> str:
+    """Inserts a lowercase name at a random position."""
     name = name.lower()
-    randpos = random.randrange(0, sequence.__len__())
-    sequence = sequence[:randpos] + name + sequence[randpos:]
-    return sequence
+    randpos = random.randint(0, len(sequence))
+    return sequence[:randpos] + name + sequence[randpos:]
 
 
-def format_fasta ( seq_id : str , description : str ,
-                 sequence: str, line_width : int = 80) -> str:
-    header = ">" + seq_id + " " + description + "\n"
-    lines = [
-        sequence[i : i + line_width]
-        for i in range(0, len(sequence), line_width)
-    ]
-    body = "".join(lines)
-    return header + body
+def format_fasta(seq_id: str, description: str, sequence: str, line_width: int = 80) -> str:
+    """Returns a formatted FASTA record."""
+    header = f">{seq_id} {description}\n"
+    lines = [sequence[i:i + line_width] for i in range(0, len(sequence), line_width)]
+    return header + "\n".join(lines) + "\n"
 
 
 def save_fasta(fasta: str, seq_id: str, folder: str = None):
@@ -187,61 +172,93 @@ def prompt_distribution() -> dict:
             print("Error: Please enter numeric values.")
 
 
-def run_analysis_pipeline(length, seq_id, desc, name, output_folder=None, distribution_decision: str = "n"):
-    """Executes generation, analysis, and saves to individual files."""
-    # 0. Distribution
-    dist = prompt_distribution() if distribution_decision == "y" else None
+def find_motifs(sequence: str):
+    """Searches for a motif and prints 1-based biological positions."""
+    dna_only = "".join([c for c in sequence if c.isupper()])
+    motif = input("Enter DNA motif to search for: ").strip().upper()
+    if not motif: return
 
-    # 1. Generate PURE DNA
+    positions = []
+    start = 0
+    while True:
+        idx = dna_only.find(motif, start)
+        if idx == -1: break
+        positions.append(idx + 1)
+        start = idx + 1
+    print(f"Motif '{motif}' found at positions: {positions}" if positions else "Motif not found.")
+
+    if positions:
+        print(f"Motif '{motif}' found at positions: {positions}")
+    else:
+        print(f"Motif '{motif}' not found in the sequence.")
+    return positions
+
+def get_complement(sequence: str) -> str:
+    """Returns the complementary DNA strand (A-T, C-G)."""
+    dna_only = "".join([c for c in sequence if c.isupper()])
+    pairs = str.maketrans("ACTG", "TGAC")
+    return dna_only.translate(pairs)
+
+def get_reverse_complement(sequence: str) -> str:
+    """Returns the reverse complement of the DNA strand."""
+    return get_complement(sequence)[::-1]
+
+
+def run_analysis_pipeline(length, seq_id, desc, name, output_folder=None, distribution_decision="n"):
+    # 1. Setup & Generate
+    dist = prompt_distribution() if distribution_decision == "y" else None
     raw_seq = generate_sequence(length, dist)
 
-    # 2. Calculate Stats on PURE DNA
+    # 2. Statistics (on pure DNA)
     current_stats = calculate_stats(raw_seq)
     stats[seq_id] = current_stats
-
-    # 3. Insert Name
-    seq_to_save = insert_name(raw_seq, name)
-
-    # 4. Display Stats
-    print(f"\nSequence statistics (DNA length={length}):")
+    print(f"\nSequence statistics (n={length}):")
     for key, val in current_stats.items():
         label = "GC-content" if key == "gc_ratio_A" else key
         print(f"{label}: {val:.2f}%")
 
-    # 5. Format and Save
-    fasta_content = format_fasta(seq_id, desc, seq_to_save)
+    # 3. Features
+    find_motifs(raw_seq)
+    comp = get_complement(raw_seq)
+    rev_comp = get_reverse_complement(raw_seq)
 
-    # Save to individual file (in folder if batch)
-    save_fasta(fasta_content, seq_id, folder=output_folder)
+    # 4. Prepare FASTA Content
+    seq_with_name = insert_name(raw_seq, name)
+    main_record = format_fasta(seq_id, desc, seq_with_name)
+    comp_record = format_fasta(f"{seq_id}_COMP", "Complementary strand", comp)
+    rev_record = format_fasta(f"{seq_id}_REV_COMP", "Reverse complement", rev_comp)
 
-    print(f"Sequence saved as {seq_id}.fasta")
+    # Combine and add mandatory footer
+    full_content = main_record + comp_record + rev_record
+
+    # 5. Save
+    filepath = f"{seq_id}.fasta"
+    if output_folder:
+        if not os.path.exists(output_folder): os.makedirs(output_folder)
+        filepath = os.path.join(output_folder, filepath)
+
+    with open(filepath, "w") as f:
+        f.write(full_content)
+    print(f"File saved: {filepath}")
+
 
 def main():
-    """Main entry point handling Batch and Distribution modes."""
     batch_decision = input("Batch mode? (y/n): ").lower()
     dist_decision = input("Custom nucleotide distribution? (y/n): ").lower()
 
     if batch_decision == "y":
-        num_seqs = validate_positive_int("Enter number of sequences: ", 1, 100)
-        # Name of the folder where all individual files will go
-        batch_folder = "Batch_Results_Folder"
-
-        for i in range(num_seqs):
+        num = validate_positive_int("Enter number of sequences: ", 1, 100)
+        folder = "Batch_Results"
+        for i in range(num):
             print(f"\n--- Sequence #{i + 1} ---")
-            length = validate_positive_int("Enter length: ", 1, 100000)
+            length = validate_positive_int("Length: ", 1, 100000)
             seq_id, desc, name = perform_metadata_inputs()
-
-            # Pass the batch_folder as the output_folder
-            run_analysis_pipeline(length, f"{seq_id}_{i + 1}", desc, name,
-                                  output_folder=batch_folder,
-                                  distribution_decision=dist_decision)
+            run_analysis_pipeline(length, f"{seq_id}_{i + 1}", desc, name, folder, dist_decision)
     else:
-        length = validate_positive_int("Enter length: ", 1, 100000)
+        length = validate_positive_int("Length: ", 1, 100000)
         seq_id, desc, name = perform_metadata_inputs()
-        run_analysis_pipeline(length, seq_id, desc, name,
-                              distribution_decision=dist_decision)
+        run_analysis_pipeline(length, seq_id, desc, name, None, dist_decision)
 
 
 if __name__ == "__main__":
-    main ()
- 
+    main()
