@@ -27,7 +27,7 @@ def calculate_stats(sequence: str) -> dict:
         "C": round(dna_only.count("C") / seq_len * 100, 2),
         "G": round(dna_only.count("G") / seq_len * 100, 2)
     }
-    results["gc_ratio_A"] = round(results["G"] + results["C"], 2)
+    results["GC-Content"] = round(results["G"] + results["C"], 2)
     return results
 
 def print_stats (stats: dict,
