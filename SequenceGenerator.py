@@ -15,7 +15,6 @@ def generate_sequence(length: int, distribution: dict = None) -> str:
 
 
 def calculate_stats(sequence: str) -> dict:
-    """Returns statistics using key 'gc_ratio_A' as per formal requirements."""
     dna_only = "".join([c for c in sequence if c.isupper()])
     seq_len = len(dna_only)
     if seq_len == 0:
